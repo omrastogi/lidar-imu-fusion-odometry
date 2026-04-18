@@ -263,7 +263,7 @@ class KittiRawLoader:
             if n + 1 < len(idxs):
                 dt = float(self._oxts_ts_abs[idxs[n + 1]] - self._oxts_ts_abs[i])
             else:
-                dt = float(t1 - self._oxts_ts_abs[i])
+                dt = float(t1 - t0)
             measurements.append({
                 "gyro":  self.imu_data[i]["gyro"].copy(),
                 "accel": self.imu_data[i]["accel"].copy(),
