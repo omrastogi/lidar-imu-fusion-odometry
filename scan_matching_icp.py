@@ -48,7 +48,7 @@ def run_icp_pcd(src_pcd, tgt_pcd, T_init=None, max_dist=1.0, max_iters=30):
     n_corr : int              number of correspondences used
     """
     if T_init is None:
-        T_init = np.eye(4)
+        T_init = np.eye(4) 
 
     result = o3d.pipelines.registration.registration_icp(
         src_pcd, tgt_pcd,
@@ -156,7 +156,9 @@ def build_trajectory(loader, n_frames=None,
             tgt_pcd=tgt_pcd,
         )
 
-        T_global = T_global @ T_est
+        # T_global = T_global @ T_est
+        T_global = T_global @ np.linalg.inv(T_est)
+
         positions.append(T_global[:3, 3].copy())
         T_chain.append(T_global.copy())
         rmse_list.append(rmse)
@@ -277,13 +279,16 @@ if __name__ == "__main__":
     print("  mean RMSE        : %.4f m" % np.mean(rmse_list))
     print("  max  RMSE        : %.4f m" % np.max(rmse_list))
 
-    # load ground truth if provided
+    # load ground truth -- explicit path wins, else fall back to loader's oxts dir
     gt_positions = None
-    if args.gt_oxts:
+    oxts_src = args.gt_oxts or loader.oxts_dir
+    try:
         from oxts_to_poses import oxts_to_poses, poses_to_positions
-        gt_poses     = oxts_to_poses(args.gt_oxts)[:args.frames]
+        gt_poses     = oxts_to_poses(oxts_src)[:args.frames]
         gt_positions = poses_to_positions(gt_poses)
         print("  ground truth loaded: %d poses" % len(gt_poses))
+    except Exception as e:
+        print("  ground truth unavailable: %s" % e)
 
     plot_trajectory(
         positions,
@@ -292,3 +297,5 @@ if __name__ == "__main__":
         title="LiDAR Odometry (%d frames)" % len(positions),
         save_path=args.save_plot,
     )
+    print("ICP positions:\n", positions)
+    print("GT positions:\n", gt_positions[:5])

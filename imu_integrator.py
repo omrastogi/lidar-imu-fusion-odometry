@@ -88,6 +88,9 @@ class IMUPreintegrator:
         gyro_corrected  = gyro - self.bg
         accel_corrected = accel - self.ba
 
+        # subtract gravity -- OXTS accel includes gravity, Z-up convention
+        accel_corrected = accel_corrected - np.array([0.0, 0.0, 9.81])
+
         #rotation increment
         phi   = gyro_corrected * dt
         dR    = exp_so3(phi)
@@ -178,40 +181,28 @@ class IMUPreintegrator:
         }
 
 
+# def propagate_state(R_prev, v_prev, p_prev, preint, dt):
+
+#     #propagate full state using preintegrated measurements
+#     #R_prev, v_prev, p_prev are the state at time k in world frame
+#     R_next = R_prev @ preint["delta_R"]
+#     v_next = v_prev + GRAVITY * dt + R_prev @ preint["delta_v"]
+#     p_next = p_prev + v_prev * dt + 0.5 * GRAVITY * dt ** 2 + R_prev @ preint["delta_p"]
+
+#     return R_next, v_next, p_next
+
 def propagate_state(R_prev, v_prev, p_prev, preint, dt):
-
-    #propagate full state using preintegrated measurements
-    #R_prev, v_prev, p_prev are the state at time k in world frame
     R_next = R_prev @ preint["delta_R"]
-    v_next = v_prev + GRAVITY * dt + R_prev @ preint["delta_v"]
-    p_next = p_prev + v_prev * dt + 0.5 * GRAVITY * dt ** 2 + R_prev @ preint["delta_p"]
-
+    v_next = v_prev + R_prev @ preint["delta_v"]
+    p_next = p_prev + v_prev * dt + R_prev @ preint["delta_p"]
     return R_next, v_next, p_next
-
 
 def transform_to_velo(preint_result, T_imu_to_velo):
     """
     Re-express preintegrated IMU deltas in the LiDAR (Velodyne) frame.
-
-    The preintegrated quantities (delta_R, delta_v, delta_p) are produced
-    in the IMU body frame at the start of the integration window.  For
-    LiDAR-odometry we need them expressed in the LiDAR frame instead.
-
-    Parameters
-    ----------
-    preint_result : dict
-        Output of IMUPreintegrator.get_result().
-    T_imu_to_velo : ndarray (4,4)
-        Rigid transform from IMU frame to LiDAR frame (KittiCalibration.T_imu_to_velo).
-
-    Returns
-    -------
-    dict  — same keys as preint_result, with delta_R / delta_v / delta_p
-            expressed in the LiDAR frame.  Covariance and Jacobians are
-            rotated into the new frame as well.
     """
-    R_IV = T_imu_to_velo[:3, :3]   # rotation: IMU -> LiDAR
-    t_IV = T_imu_to_velo[:3,  3]   # translation: origin of IMU in LiDAR coords
+    R_IV = T_imu_to_velo[:3, :3]
+    t_IV = T_imu_to_velo[:3,  3]
 
     dR = preint_result["delta_R"]
     dv = preint_result["delta_v"]
@@ -219,10 +210,8 @@ def transform_to_velo(preint_result, T_imu_to_velo):
 
     dR_velo = R_IV @ dR @ R_IV.T
     dv_velo = R_IV @ dv
-    # lever-arm correction: displacement of LiDAR origin due to IMU rotation
     dp_velo = R_IV @ dp - (dR_velo - np.eye(3)) @ t_IV
 
-    # rotate 3x3 jacobian blocks into new frame
     def _rot_jac(J):
         return R_IV @ J @ R_IV.T
 
@@ -236,7 +225,6 @@ def transform_to_velo(preint_result, T_imu_to_velo):
     result["J_p_bg"]  = R_IV @ preint_result["J_p_bg"] @ R_IV.T
     result["J_p_ba"]  = R_IV @ preint_result["J_p_ba"]
 
-    # rotate covariance: build block-diagonal rotation for (rot, vel, pos) sub-block
     P = preint_result["cov"].copy()
     for i in range(0, 9, 3):
         for j in range(0, 9, 3):
@@ -246,17 +234,75 @@ def transform_to_velo(preint_result, T_imu_to_velo):
     return result
 
 
+# ------------------------------------------------------------------
+# IMU-only trajectory builder
+# ------------------------------------------------------------------
+
+def build_imu_trajectory(loader, n_frames=None):
+    """
+    Build a trajectory by chaining IMU preintegration results.
+    Used as a diagnostic to verify preintegrator output.
+
+    Returns
+    -------
+    positions : ndarray (n_frames, 3)   XYZ positions in world frame
+    """
+    if n_frames is None:
+        n_frames = loader.n_frames
+    n_frames = min(n_frames, loader.n_frames)
+
+    R_world = np.eye(3)
+    p_world = np.zeros(3)
+    positions = [p_world.copy()]
+
+    preint = IMUPreintegrator()
+
+    for k in range(n_frames - 1):
+        preint.reset()
+        imu_batch = loader.get_imu_between(k, k + 1)
+
+        if not imu_batch:
+            positions.append(p_world.copy())
+            continue
+
+        result = preint.integrate_between(imu_batch)
+
+        if loader.calib is not None:
+            result = transform_to_velo(result, loader.calib.T_imu_to_velo)
+
+        # chain: apply relative rotation and position in world frame
+        p_world = p_world + R_world @ result["delta_p"]
+        R_world = R_world @ result["delta_R"]
+
+        positions.append(p_world.copy())
+
+    return np.array(positions)
+
+
+# ------------------------------------------------------------------
+# smoke test
+# ------------------------------------------------------------------
+
 if __name__ == "__main__":
+
     import argparse
-    from kitti_loader import KittiRawLoader
+    import matplotlib.pyplot as plt
 
     parser = argparse.ArgumentParser(description="IMU preintegration smoke test on KITTI data")
     parser.add_argument("drive_dir",
                         help="path to drive sync folder "
                              "(e.g. data/raw/2011_10_03/2011_10_03_drive_0027_sync/)")
-    parser.add_argument("--frames", type=int, default=6,
+    parser.add_argument("--frames",    type=int, default=6,
                         help="number of consecutive LiDAR frames to test (default 6)")
+    parser.add_argument("--plot",      action="store_true",
+                        help="plot IMU trajectory vs ground truth")
+    parser.add_argument("--gt-oxts",   type=str, default=None,
+                        help="path to oxts/data for ground truth overlay")
+    parser.add_argument("--save-plot", type=str, default=None,
+                        help="save plot to this path")
     args = parser.parse_args()
+
+    from kitti_loader import KittiRawLoader
 
     loader = KittiRawLoader(args.drive_dir)
     print("drive:        %s" % args.drive_dir)
@@ -267,30 +313,75 @@ if __name__ == "__main__":
         print("  T_imu_to_velo R:\n%s" % np.round(loader.calib.T_imu_to_velo[:3, :3], 6))
         print("  T_imu_to_velo t: %s m" % np.round(loader.calib.T_imu_to_velo[:3, 3], 6))
     else:
-        print("calibration:  not found — results stay in IMU frame")
+        print("calibration:  not found -- results stay in IMU frame")
     print()
 
-    n = min(args.frames, loader.n_frames) - 1
-    preint = IMUPreintegrator()
+    if args.plot:
 
-    for k in range(n):
-        preint.reset()
-        imu_batch = loader.get_imu_between(k, k + 1)
-        result    = preint.integrate_between(imu_batch)
+        print("building IMU-only trajectory over %d frames..." % args.frames)
+        imu_positions = build_imu_trajectory(loader, n_frames=args.frames)
 
-        if loader.calib:
-            result = transform_to_velo(result, loader.calib.T_imu_to_velo)
-            frame_label = "LiDAR frame"
-        else:
-            frame_label = "IMU frame"
+        gt_positions = None
+        if args.gt_oxts:
+            from oxts_to_poses import oxts_to_poses, poses_to_positions
+            gt_poses     = oxts_to_poses(args.gt_oxts)[:args.frames]
+            gt_positions = poses_to_positions(gt_poses)
+            print("ground truth loaded: %d poses" % len(gt_poses))
 
-        t0 = loader.get_timestamp(k)
-        t1 = loader.get_timestamp(k + 1)
-        print("frames %d -> %d  (dt_lidar=%.4f s, dt_imu=%.4f s, n_imu=%d)  [%s]" % (
-            k, k + 1, t1 - t0, result["dt"], len(imu_batch), frame_label))
-        print("  delta_R (deg): %s" % str(np.round(
-            np.degrees(np.array([result["delta_R"][2, 1],
-                                 result["delta_R"][0, 2],
-                                 result["delta_R"][1, 0]])), 4)))
-        print("  delta_v (m/s): %s" % str(np.round(result["delta_v"], 4)))
-        print("  delta_p   (m): %s" % str(np.round(result["delta_p"], 4)))
+        print("IMU total distance: %.2f m" % np.sum(
+            np.linalg.norm(np.diff(imu_positions, axis=0), axis=1)))
+
+        fig, ax = plt.subplots(figsize=(9, 8))
+
+        if gt_positions is not None:
+            ax.plot(gt_positions[:, 0], gt_positions[:, 1],
+                    linewidth=1.5, color="gray", linestyle="--",
+                    alpha=0.7, label="ground truth")
+
+        ax.plot(imu_positions[:, 0], imu_positions[:, 1],
+                linewidth=1.2, color="steelblue", alpha=0.8, label="IMU only")
+        ax.scatter(imu_positions[0,  0], imu_positions[0,  1],
+                   c="green", s=80, zorder=5, label="start")
+        ax.scatter(imu_positions[-1, 0], imu_positions[-1, 1],
+                   c="red",   s=80, zorder=5, label="end")
+
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        ax.set_title("IMU-only trajectory vs ground truth (%d frames)" % args.frames)
+        ax.set_aspect("equal")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        if args.save_plot:
+            plt.savefig(args.save_plot, dpi=150, bbox_inches="tight")
+            print("plot saved to: %s" % args.save_plot)
+
+        plt.show()
+
+    else:
+
+        n      = min(args.frames, loader.n_frames) - 1
+        preint = IMUPreintegrator()
+
+        for k in range(n):
+            preint.reset()
+            imu_batch = loader.get_imu_between(k, k + 1)
+            result    = preint.integrate_between(imu_batch)
+
+            if loader.calib:
+                result = transform_to_velo(result, loader.calib.T_imu_to_velo)
+                frame_label = "LiDAR frame"
+            else:
+                frame_label = "IMU frame"
+
+            t0 = loader.get_timestamp(k)
+            t1 = loader.get_timestamp(k + 1)
+            print("frames %d -> %d  (dt_lidar=%.4f s, dt_imu=%.4f s, n_imu=%d)  [%s]" % (
+                k, k + 1, t1 - t0, result["dt"], len(imu_batch), frame_label))
+            print("  delta_R (deg): %s" % str(np.round(
+                np.degrees(np.array([result["delta_R"][2, 1],
+                                     result["delta_R"][0, 2],
+                                     result["delta_R"][1, 0]])), 4)))
+            print("  delta_v (m/s): %s" % str(np.round(result["delta_v"], 4)))
+            print("  delta_p   (m): %s" % str(np.round(result["delta_p"], 4)))
