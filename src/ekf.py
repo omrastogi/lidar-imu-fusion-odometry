@@ -3,6 +3,7 @@ from imu_integrator import (
     IMUPreintegrator,
     transform_to_velo,
     propagate_state,
+    bootstrap_velocity_from_oxts,
     exp_so3,
     skew,
     GRAVITY,
@@ -171,11 +172,11 @@ class LidarImuEKF:
         Q       = result["cov"]
         self.P  = F @ self.P @ F.T + Q
 
-        # build predicted relative transform for ICP init
-        # ICP uses source->target convention: R_est = delta_R.T, t_est = -delta_p
+        # Build predicted relative transform for ICP init.
+        # ICP uses source->target convention: R_est = delta_R.T, t_est = -delta_p_body.
         T_predicted         = np.eye(4)
         T_predicted[:3, :3] = result["delta_R"].T
-        T_predicted[:3,  3] = -result["delta_p"]
+        T_predicted[:3,  3] = -self._last_t_pred_b
 
         # update nominal state to predicted
         self.R = R_next
@@ -310,16 +311,9 @@ def run_ekf_pipeline(loader, n_frames=None,
         n_frames = loader.n_frames
     n_frames = min(n_frames, loader.n_frames)
 
-    # bootstrap: read initial velocity from OXTS so IMU prediction starts accurate
+    # Bootstrap with OXTS velocity so IMU prediction starts from the right scale.
     calib = loader.calib
-    v_init = None
-    if loader.oxts_files:
-        vals0  = np.fromstring(open(loader.oxts_files[0]).read(), sep=" ")
-        v_body = vals0[8:11]   # vf, vl, vu in IMU body frame
-        if calib is not None:
-            v_init = calib.T_imu_to_velo[:3, :3] @ v_body
-        else:
-            v_init = v_body.copy()
+    v_init = bootstrap_velocity_from_oxts(loader)
 
     ekf          = LidarImuEKF(sigma_r=sigma_r, sigma_t=sigma_t, v_init=v_init)
     positions    = [np.zeros(3)]

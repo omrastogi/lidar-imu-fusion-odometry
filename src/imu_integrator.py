@@ -88,8 +88,9 @@ class IMUPreintegrator:
         gyro_corrected  = gyro - self.bg
         accel_corrected = accel - self.ba
 
-        # subtract gravity -- OXTS accel includes gravity, Z-up convention
-        accel_corrected = accel_corrected - np.array([0.0, 0.0, 9.81])
+        # Recover kinematic acceleration from KITTI OXTS specific force.
+        # Gravity is then applied during full-state propagation.
+        accel_kinematic = accel_corrected + self.delta_R.T @ GRAVITY
 
         #rotation increment
         phi   = gyro_corrected * dt
@@ -100,15 +101,15 @@ class IMUPreintegrator:
         #order matters, update p and v before R
         self.delta_p = (self.delta_p
                         + self.delta_v * dt
-                        + 0.5 * self.delta_R @ accel_corrected * dt ** 2)
+                        + 0.5 * self.delta_R @ accel_kinematic * dt ** 2)
 
-        self.delta_v = self.delta_v + self.delta_R @ accel_corrected * dt
+        self.delta_v = self.delta_v + self.delta_R @ accel_kinematic * dt
 
         #propagate covariance
-        self._propagate_covariance(accel_corrected, dt, dR, Jr)
+        self._propagate_covariance(accel_kinematic, dt, dR, Jr)
 
         #propagate bias jacobians
-        self._propagate_bias_jacobians(accel_corrected, dt, dR, Jr)
+        self._propagate_bias_jacobians(accel_kinematic, dt, dR, Jr)
 
         #update rotation last
         self.delta_R = self.delta_R @ dR
@@ -181,21 +182,29 @@ class IMUPreintegrator:
         }
 
 
-# def propagate_state(R_prev, v_prev, p_prev, preint, dt):
-
-#     #propagate full state using preintegrated measurements
-#     #R_prev, v_prev, p_prev are the state at time k in world frame
-#     R_next = R_prev @ preint["delta_R"]
-#     v_next = v_prev + GRAVITY * dt + R_prev @ preint["delta_v"]
-#     p_next = p_prev + v_prev * dt + 0.5 * GRAVITY * dt ** 2 + R_prev @ preint["delta_p"]
-
-#     return R_next, v_next, p_next
-
 def propagate_state(R_prev, v_prev, p_prev, preint, dt):
+    # The KITTI/OXTS preintegration path already removes gravity from the measured
+    # specific force, so propagation here only applies the integrated body motion.
     R_next = R_prev @ preint["delta_R"]
     v_next = v_prev + R_prev @ preint["delta_v"]
     p_next = p_prev + v_prev * dt + R_prev @ preint["delta_p"]
     return R_next, v_next, p_next
+
+
+def bootstrap_velocity_from_oxts(loader):
+    """
+    Read initial KITTI OXTS body velocity and express it in the active frame.
+    Returns None when OXTS packets are unavailable.
+    """
+    if not getattr(loader, "oxts_files", None):
+        return None
+
+    vals0  = np.fromstring(open(loader.oxts_files[0]).read(), sep=" ")
+    v_body = vals0[8:11]   # vf, vl, vu in IMU body frame
+
+    if loader.calib is not None:
+        return loader.calib.T_imu_to_velo[:3, :3] @ v_body
+    return v_body.copy()
 
 def transform_to_velo(preint_result, T_imu_to_velo):
     """
@@ -252,6 +261,9 @@ def build_imu_trajectory(loader, n_frames=None):
     n_frames = min(n_frames, loader.n_frames)
 
     R_world = np.eye(3)
+    v_world = bootstrap_velocity_from_oxts(loader)
+    if v_world is None:
+        v_world = np.zeros(3)
     p_world = np.zeros(3)
     positions = [p_world.copy()]
 
@@ -270,9 +282,10 @@ def build_imu_trajectory(loader, n_frames=None):
         if loader.calib is not None:
             result = transform_to_velo(result, loader.calib.T_imu_to_velo)
 
-        # chain: apply relative rotation and position in world frame
-        p_world = p_world + R_world @ result["delta_p"]
-        R_world = R_world @ result["delta_R"]
+        dt_lidar = loader.get_timestamp(k + 1) - loader.get_timestamp(k)
+        R_world, v_world, p_world = propagate_state(
+            R_world, v_world, p_world, result, dt_lidar
+        )
 
         positions.append(p_world.copy())
 

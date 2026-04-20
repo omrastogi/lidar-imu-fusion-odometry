@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import os
+import re
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -64,6 +65,14 @@ def _apply_theme():
     })
 
 
+def _sequence_label(drive_dir):
+    drive_name = os.path.basename(os.path.normpath(drive_dir))
+    match = re.search(r"_drive_(\d+)", drive_name)
+    if match:
+        return f"Seq {match.group(1)}"
+    return drive_name
+
+
 def _save(fig, base_path, suffix):
     if base_path:
         root, ext = os.path.splitext(base_path)
@@ -71,7 +80,7 @@ def _save(fig, base_path, suffix):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         fig.savefig(path, dpi=150, bbox_inches='tight',
                     facecolor=fig.get_facecolor())
-        print(f"  Saved → {path}")
+        print(f"  Saved -> {path}")
 
 
 # -----------------------------------------------------------------------
@@ -83,7 +92,7 @@ def plot_combined(lidar_pos, imu_pos, ekf_pos, frames, times,
                   lidar_rmse, ekf_rmse,
                   gt_pos, has_gt,
                   lidar_err, imu_err, ekf_err,
-                  save_path):
+                  save_path, seq_label):
 
     C_LIDAR = '#ffa657'
     C_IMU   = '#d2a8ff'
@@ -91,11 +100,12 @@ def plot_combined(lidar_pos, imu_pos, ekf_pos, frames, times,
     C_GT    = '#3fb950'
     C_WARN  = '#f78166'
 
-    fig = plt.figure(figsize=(18, 16))
+    fig = plt.figure(figsize=(21, 18))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
-    fig.suptitle(f"Combined Comparison: LiDAR / IMU / EKF  |  {len(frames)} frames  |  {times[-1]:.0f} s",
+                            top=0.94, bottom=0.06, left=0.05, right=0.98,
+                            height_ratios=[2.8, 1, 1])
+    fig.suptitle(f"Combined Comparison: {seq_label}  |  LiDAR / IMU / EKF  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
     # [0, 0:2] trajectory overlay
@@ -109,7 +119,7 @@ def plot_combined(lidar_pos, imu_pos, ekf_pos, frames, times,
     ax.scatter(*ekf_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
     ax.scatter(*ekf_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('Trajectory Comparison')
+    ax.set_title(f'Trajectory Comparison ({seq_label})')
     ax.set_aspect('equal'); ax.grid(True); ax.legend()
 
     # [0, 2] ICP RMSE
@@ -218,15 +228,16 @@ def plot_combined(lidar_pos, imu_pos, ekf_pos, frames, times,
 # -----------------------------------------------------------------------
 
 def plot_lidar(lidar_pos, frames, times, lidar_dist, lidar_rmse,
-               gt_pos, has_gt, lidar_err, save_path):
+               gt_pos, has_gt, lidar_err, save_path, seq_label):
 
     C = '#ffa657'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(18, 12))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
-    fig.suptitle(f"LiDAR-only (ICP)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
+                            top=0.94, bottom=0.06, left=0.05, right=0.98,
+                            height_ratios=[2.3, 1])
+    fig.suptitle(f"LiDAR-only (ICP)  |  {seq_label}  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
     ax = fig.add_subplot(gs[0, :2])
@@ -237,7 +248,7 @@ def plot_lidar(lidar_pos, frames, times, lidar_dist, lidar_rmse,
     ax.scatter(*lidar_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
     ax.scatter(*lidar_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('LiDAR Trajectory'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.set_title(f'LiDAR Trajectory ({seq_label})'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[0, 2])
     ax.fill_between(frames[1:len(lidar_rmse)+1], lidar_rmse, alpha=0.25, color=C)
@@ -293,15 +304,16 @@ def plot_lidar(lidar_pos, frames, times, lidar_dist, lidar_rmse,
 # -----------------------------------------------------------------------
 
 def plot_imu(imu_pos, frames, times, imu_dist,
-             gt_pos, has_gt, imu_err, save_path):
+             gt_pos, has_gt, imu_err, save_path, seq_label):
 
     C = '#d2a8ff'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(18, 12))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
-    fig.suptitle(f"IMU-only (Dead Reckoning)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
+                            top=0.94, bottom=0.06, left=0.05, right=0.98,
+                            height_ratios=[2.3, 1])
+    fig.suptitle(f"IMU-only (Dead Reckoning)  |  {seq_label}  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
     ax = fig.add_subplot(gs[0, :2])
@@ -312,7 +324,7 @@ def plot_imu(imu_pos, frames, times, imu_dist,
     ax.scatter(*imu_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
     ax.scatter(*imu_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('IMU Trajectory (dead reckoning)')
+    ax.set_title(f'IMU Trajectory ({seq_label}, dead reckoning)')
     ax.set_aspect('equal'); ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[0, 2])
@@ -371,15 +383,16 @@ def plot_imu(imu_pos, frames, times, imu_dist,
 # -----------------------------------------------------------------------
 
 def plot_ekf(ekf_pos, frames, times, ekf_dist, ekf_rmse,
-             gt_pos, has_gt, ekf_err, save_path):
+             gt_pos, has_gt, ekf_err, save_path, seq_label):
 
     C = '#58a6ff'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(18, 12))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
-    fig.suptitle(f"EKF Fused (LiDAR + IMU)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
+                            top=0.94, bottom=0.06, left=0.05, right=0.98,
+                            height_ratios=[2.3, 1])
+    fig.suptitle(f"EKF Fused (LiDAR + IMU)  |  {seq_label}  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
     ax = fig.add_subplot(gs[0, :2])
@@ -390,7 +403,7 @@ def plot_ekf(ekf_pos, frames, times, ekf_dist, ekf_rmse,
     ax.scatter(*ekf_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
     ax.scatter(*ekf_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('EKF Fused Trajectory'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.set_title(f'EKF Fused Trajectory ({seq_label})'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[0, 2])
     ekf_rmse_arr = np.array(ekf_rmse)
@@ -472,6 +485,7 @@ def main():
 
     loader = KittiRawLoader(args.drive_dir)
     N      = min(args.frames, loader.n_frames)
+    seq_label = _sequence_label(args.drive_dir)
 
     # ---- run pipelines ----------------------------------------------
     print("\n[1/3] LiDAR-only ICP")
@@ -536,16 +550,16 @@ def main():
                   lidar_rmse, ekf_rmse,
                   gt_pos, has_gt,
                   lidar_err, imu_err, ekf_err,
-                  args.save_plot)
+                  args.save_plot, seq_label)
 
     plot_lidar(lidar_pos, frames, times, lidar_dist, lidar_rmse,
-               gt_pos, has_gt, lidar_err, args.save_plot)
+               gt_pos, has_gt, lidar_err, args.save_plot, seq_label)
 
     plot_imu(imu_pos, frames, times, imu_dist,
-             gt_pos, has_gt, imu_err, args.save_plot)
+             gt_pos, has_gt, imu_err, args.save_plot, seq_label)
 
     plot_ekf(ekf_pos, frames, times, ekf_dist, ekf_rmse,
-             gt_pos, has_gt, ekf_err, args.save_plot)
+             gt_pos, has_gt, ekf_err, args.save_plot, seq_label)
 
     plt.show()
 
