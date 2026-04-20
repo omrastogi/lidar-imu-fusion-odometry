@@ -91,28 +91,28 @@ def plot_combined(lidar_pos, imu_pos, ekf_pos, frames, times,
     C_GT    = '#3fb950'
     C_WARN  = '#f78166'
 
-    fig = plt.figure(figsize=(18, 16))
+    fig = plt.figure(figsize=(20, 22))
     fig.patch.set_facecolor('#0d1117')
+    # Top row is 2.5x taller so the trajectory map is large and readable
     gs  = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
+                            top=0.93, bottom=0.07, left=0.06, right=0.97,
+                            height_ratios=[2.5, 1, 1])
     fig.suptitle(f"Combined Comparison: LiDAR / IMU / EKF  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
-    # [0, 0:2] trajectory overlay
+    # [0, 0:2] trajectory overlay — large
     ax = fig.add_subplot(gs[0, :2])
     if has_gt:
         ax.plot(gt_pos[:, 0], gt_pos[:, 1], color=C_GT, lw=1.5, alpha=0.5,
                 linestyle='--', label='Ground Truth')
-    ax.plot(lidar_pos[:, 0], lidar_pos[:, 1], color=C_LIDAR, lw=1.2, alpha=0.85, label='LiDAR only')
-    ax.plot(imu_pos[:,   0], imu_pos[:,   1], color=C_IMU,   lw=1.2, alpha=0.85, label='IMU only')
-    ax.plot(ekf_pos[:,   0], ekf_pos[:,   1], color=C_EKF,   lw=1.8, alpha=0.95, label='EKF fused')
-    ax.scatter(*ekf_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
-    ax.scatter(*ekf_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
+    ax.plot(lidar_pos[:, 0], lidar_pos[:, 1], color=C_LIDAR, lw=1.4, alpha=0.85, label='LiDAR only')
+    ax.plot(imu_pos[:,   0], imu_pos[:,   1], color=C_IMU,   lw=1.4, alpha=0.85, label='IMU only')
+    ax.plot(ekf_pos[:,   0], ekf_pos[:,   1], color=C_EKF,   lw=2.0, alpha=0.95, label='EKF fused')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
     ax.set_title('Trajectory Comparison')
-    ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.grid(True); ax.legend()
 
-    # [0, 2] ICP RMSE
+    # [0, 2] ICP RMSE comparison
     ax = fig.add_subplot(gs[0, 2])
     ax.plot(frames[1:len(lidar_rmse)+1], lidar_rmse, color=C_LIDAR, lw=1.0, alpha=0.8, label='LiDAR ICP')
     ax.plot(frames[1:len(ekf_rmse)+1],   ekf_rmse,   color=C_EKF,   lw=1.0, alpha=0.9, label='EKF ICP')
@@ -222,30 +222,41 @@ def plot_lidar(lidar_pos, frames, times, lidar_dist, lidar_rmse,
 
     C = '#ffa657'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(16, 13))
     fig.patch.set_facecolor('#0d1117')
+    # Top row is 2x taller so the trajectory map is large and readable
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
+                            top=0.93, bottom=0.07, left=0.06, right=0.97,
+                            height_ratios=[2, 1])
     fig.suptitle(f"LiDAR-only (ICP)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
+    # Trajectory — spans first two columns of the tall top row
     ax = fig.add_subplot(gs[0, :2])
     if has_gt:
         ax.plot(gt_pos[:, 0], gt_pos[:, 1], color=C_GT, lw=1.5, alpha=0.5,
                 linestyle='--', label='Ground Truth')
-    ax.plot(lidar_pos[:, 0], lidar_pos[:, 1], color=C, lw=1.5, label='LiDAR only')
-    ax.scatter(*lidar_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
-    ax.scatter(*lidar_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
+    ax.plot(lidar_pos[:, 0], lidar_pos[:, 1], color=C, lw=1.8, label='LiDAR only')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('LiDAR Trajectory'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.set_title('LiDAR Trajectory'); ax.grid(True); ax.legend()
 
+    # LiDAR-only ICP RMSE — dedicated panel with full stats
     ax = fig.add_subplot(gs[0, 2])
-    ax.fill_between(frames[1:len(lidar_rmse)+1], lidar_rmse, alpha=0.25, color=C)
-    ax.plot(frames[1:len(lidar_rmse)+1], lidar_rmse, color=C, lw=1.2)
-    ax.axhline(np.mean(lidar_rmse), color='white', lw=0.8, linestyle=':', alpha=0.6,
-               label=f'mean={np.mean(lidar_rmse):.3f}')
+    rmse_frames = frames[1:len(lidar_rmse)+1]
+    ax.fill_between(rmse_frames, lidar_rmse, alpha=0.25, color=C)
+    ax.plot(rmse_frames, lidar_rmse, color=C, lw=1.4, label='LiDAR ICP RMSE')
+    mean_rmse = np.mean(lidar_rmse)
+    std_rmse  = np.std(lidar_rmse)
+    ax.axhline(mean_rmse, color='white', lw=1.0, linestyle=':', alpha=0.7,
+               label=f'mean = {mean_rmse:.4f} m')
+    ax.axhline(mean_rmse + 2 * std_rmse, color=C_WARN, lw=0.9, linestyle='--', alpha=0.8,
+               label=f'μ+2σ = {mean_rmse + 2*std_rmse:.4f} m')
+    worst_idx = int(np.argmax(lidar_rmse))
+    ax.scatter(rmse_frames[worst_idx], lidar_rmse[worst_idx],
+               c=C_WARN, s=50, zorder=6, label=f'worst: {lidar_rmse[worst_idx]:.4f} m')
     ax.set_xlabel('Frame'); ax.set_ylabel('ICP RMSE (m)')
-    ax.set_title('ICP RMSE per Frame'); ax.grid(True); ax.legend()
+    ax.set_title('LiDAR-only ICP RMSE per Frame')
+    ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[1, 0])
     if has_gt:
@@ -297,23 +308,23 @@ def plot_imu(imu_pos, frames, times, imu_dist,
 
     C = '#d2a8ff'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(16, 13))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
+                            top=0.93, bottom=0.07, left=0.06, right=0.97,
+                            height_ratios=[2, 1])
     fig.suptitle(f"IMU-only (Dead Reckoning)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
+    # Trajectory — large
     ax = fig.add_subplot(gs[0, :2])
     if has_gt:
         ax.plot(gt_pos[:, 0], gt_pos[:, 1], color=C_GT, lw=1.5, alpha=0.5,
                 linestyle='--', label='Ground Truth')
-    ax.plot(imu_pos[:, 0], imu_pos[:, 1], color=C, lw=1.5, label='IMU only')
-    ax.scatter(*imu_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
-    ax.scatter(*imu_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
+    ax.plot(imu_pos[:, 0], imu_pos[:, 1], color=C, lw=1.8, label='IMU only')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
     ax.set_title('IMU Trajectory (dead reckoning)')
-    ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[0, 2])
     speed = np.linalg.norm(np.diff(imu_pos, axis=0), axis=1) * 10
@@ -354,11 +365,11 @@ def plot_imu(imu_pos, frames, times, imu_dist,
     ax.grid(True)
 
     ax = fig.add_subplot(gs[1, 2])
-    ax.plot(frames, imu_pos[:, 0], color=C,       lw=1.0, label='X')
-    ax.plot(frames, imu_pos[:, 1], color='#3fb950', lw=1.0, label='Y')
-    ax.plot(frames, imu_pos[:, 2], color='#ffa657', lw=1.0, label='Z')
+    ax.plot(frames, imu_pos[:, 0], color=C,         lw=1.0, label='X')
+    ax.plot(frames, imu_pos[:, 1], color='#3fb950',  lw=1.0, label='Y')
+    ax.plot(frames, imu_pos[:, 2], color='#ffa657',  lw=1.0, label='Z')
     if has_gt:
-        ax.plot(frames, gt_pos[:, 0], color=C,       lw=0.7, linestyle='--', alpha=0.4)
+        ax.plot(frames, gt_pos[:, 0], color=C,        lw=0.7, linestyle='--', alpha=0.4)
         ax.plot(frames, gt_pos[:, 1], color='#3fb950', lw=0.7, linestyle='--', alpha=0.4)
     ax.set_xlabel('Frame'); ax.set_ylabel('Position (m)')
     ax.set_title('IMU X/Y/Z  (dashed = GT)'); ax.grid(True); ax.legend()
@@ -375,22 +386,22 @@ def plot_ekf(ekf_pos, frames, times, ekf_dist, ekf_rmse,
 
     C = '#58a6ff'; C_GT = '#3fb950'; C_WARN = '#f78166'
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(16, 13))
     fig.patch.set_facecolor('#0d1117')
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.35,
-                            top=0.93, bottom=0.07, left=0.06, right=0.97)
+                            top=0.93, bottom=0.07, left=0.06, right=0.97,
+                            height_ratios=[2, 1])
     fig.suptitle(f"EKF Fused (LiDAR + IMU)  |  {len(frames)} frames  |  {times[-1]:.0f} s",
                  fontsize=13, fontweight='bold', color='#e6edf3', y=0.97)
 
+    # Trajectory — large
     ax = fig.add_subplot(gs[0, :2])
     if has_gt:
         ax.plot(gt_pos[:, 0], gt_pos[:, 1], color=C_GT, lw=1.5, alpha=0.5,
                 linestyle='--', label='Ground Truth')
-    ax.plot(ekf_pos[:, 0], ekf_pos[:, 1], color=C, lw=1.5, label='EKF fused')
-    ax.scatter(*ekf_pos[0,  :2], c=C_GT,   s=80, zorder=6, marker='o', edgecolors='white', lw=0.8, label='Start')
-    ax.scatter(*ekf_pos[-1, :2], c=C_WARN, s=80, zorder=6, marker='X', edgecolors='white', lw=0.8, label='End')
+    ax.plot(ekf_pos[:, 0], ekf_pos[:, 1], color=C, lw=1.8, label='EKF fused')
     ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
-    ax.set_title('EKF Fused Trajectory'); ax.set_aspect('equal'); ax.grid(True); ax.legend()
+    ax.set_title('EKF Fused Trajectory'); ax.grid(True); ax.legend()
 
     ax = fig.add_subplot(gs[0, 2])
     ekf_rmse_arr = np.array(ekf_rmse)

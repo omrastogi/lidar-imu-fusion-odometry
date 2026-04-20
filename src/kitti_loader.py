@@ -106,13 +106,6 @@ class KittiCalibration:
     """
 
     def __init__(self, calib_dir):
-        """
-        Parameters
-        ----------
-        calib_dir : str
-            Folder containing calib_imu_to_velo.txt, calib_velo_to_cam.txt,
-            calib_cam_to_cam.txt  (e.g. .../2011_10_03/).
-        """
         self.calib_dir = calib_dir
         self._load_imu_to_velo()
         self._load_velo_to_cam()
@@ -153,16 +146,6 @@ class KittiRawLoader:
     """
     Loads LiDAR scans, IMU measurements, and calibration for a single
     KITTI raw drive sync folder.
-
-    Parameters
-    ----------
-    drive_dir : str
-        Path to the drive sync folder, e.g.
-        data/raw/2011_10_03/2011_10_03_drive_0027_sync/
-    calib_dir : str, optional
-        Path to the calibration folder. When omitted, the parent of
-        drive_dir is used (the date folder that contains calib_*.txt).
-        Pass None explicitly to skip calibration loading.
     """
 
     def __init__(self, drive_dir, calib_dir="auto"):
@@ -197,7 +180,6 @@ class KittiRawLoader:
     # ------------------------------------------------------------------
 
     def _detect_calib_dir(self):
-        """Return parent dir if it contains calib files, else None."""
         parent = os.path.dirname(self.drive_dir)
         if os.path.isfile(os.path.join(parent, "calib_imu_to_velo.txt")):
             return parent
@@ -207,7 +189,7 @@ class KittiRawLoader:
         path = os.path.join(self.drive_dir, "velodyne_points", "timestamps.txt")
         abs_ts = _parse_timestamps(path)
         self._velo_ts_abs    = abs_ts
-        self.velo_timestamps = abs_ts - abs_ts[0]   # seconds relative to frame 0
+        self.velo_timestamps = abs_ts - abs_ts[0]
 
     def _load_oxts_timestamps(self):
         path = os.path.join(self.drive_dir, "oxts", "timestamps.txt")
@@ -229,12 +211,10 @@ class KittiRawLoader:
     # ------------------------------------------------------------------
 
     def get_lidar_scan(self, k):
-        """Return Nx4 array (x, y, z, reflectance) for LiDAR frame k."""
         assert 0 <= k < self.n_frames, "frame %d out of range [0, %d)" % (k, self.n_frames)
         return np.fromfile(self.velo_files[k], dtype=np.float32).reshape(-1, 4)
 
     def get_timestamp(self, k):
-        """Return timestamp in seconds (relative to frame 0) for LiDAR frame k."""
         assert 0 <= k < self.n_frames
         return float(self.velo_timestamps[k])
 
@@ -243,10 +223,10 @@ class KittiRawLoader:
         Return IMU measurements between LiDAR frames k_start and k_end.
 
         Each element: {"gyro": ndarray(3,), "accel": ndarray(3,), "dt": float}
-        Compatible with IMUPreintegrator.integrate_between().
 
-        dt for each sample = time to the next sample; last sample spans
-        to t_{k_end}, so sum(dt) == inter-frame interval.
+        dt for each sample = time to the NEXT sample's timestamp.
+        The last sample's dt spans from its timestamp to t1 (the k_end
+        LiDAR timestamp) -- NOT the full inter-frame interval.
         """
         assert 0 <= k_start < k_end < self.n_frames
 
@@ -261,9 +241,11 @@ class KittiRawLoader:
         measurements = []
         for n, i in enumerate(idxs):
             if n + 1 < len(idxs):
+                # dt to the next IMU sample
                 dt = float(self._oxts_ts_abs[idxs[n + 1]] - self._oxts_ts_abs[i])
             else:
-                dt = float(t1 - t0)
+                # last sample: dt spans from this sample to the k_end LiDAR frame
+                dt = float(t1 - self._oxts_ts_abs[i])
             measurements.append({
                 "gyro":  self.imu_data[i]["gyro"].copy(),
                 "accel": self.imu_data[i]["accel"].copy(),
@@ -282,12 +264,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="KITTI raw dataset loader smoke test")
-    parser.add_argument("drive_dir",
-                        help="path to drive sync folder "
-                             "(e.g. data/raw/2011_10_03/2011_10_03_drive_0027_sync/); "
-                             "calib is auto-detected from its parent directory")
-    parser.add_argument("--calib-dir", default="auto",
-                        help="override calibration folder; pass 'none' to disable")
+    parser.add_argument("drive_dir")
+    parser.add_argument("--calib-dir", default="auto")
     args = parser.parse_args()
 
     calib_dir = None if args.calib_dir == "none" else args.calib_dir
@@ -317,4 +295,3 @@ if __name__ == "__main__":
         print("  T_imu_to_velo:\n%s" % np.round(c.T_imu_to_velo, 6))
         print("  T_velo_to_cam0:\n%s" % np.round(c.T_velo_to_cam0, 6))
         print("  T_imu_to_cam0:\n%s" % np.round(c.T_imu_to_cam0, 6))
-        print("  cam0 P_rect:\n%s" % np.round(c.cam[0]["P_rect"], 4))
