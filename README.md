@@ -2,6 +2,8 @@
 
 Point-to-plane ICP scan matching fused with IMU preintegration via a 15-state Error-State Kalman Filter, evaluated on the KITTI raw dataset.
 
+![LiDAR-IMU Fusion Odometry](odometry.png)
+
 ## Setup
 
 ```bash
