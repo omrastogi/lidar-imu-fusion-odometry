@@ -2,7 +2,7 @@
 
 Point-to-plane ICP scan matching fused with IMU preintegration via a 15-state Error-State Kalman Filter, evaluated on the KITTI raw dataset.
 
-![LiDAR-IMU Fusion Odometry](trajectory_comparision_dark.png)
+![LiDAR-IMU Fusion Odometry](trajectory_comparison_dark.png)
 
 ## ⚠️ EKF Bug Fix (Sep 2026)
 
