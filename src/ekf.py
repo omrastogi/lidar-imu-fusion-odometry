@@ -1,3 +1,30 @@
+"""
+15-state Error-State Kalman Filter fusing LiDAR ICP with IMU preintegration.
+
+BUG FIX (2026-09): the original filter drifted far worse than ICP-only on
+KITTI seq 01/04. Two defects, found by testing hypotheses in isolation:
+
+1. Absolute-position covariance collapse (dominant, ~15x error on seq 04).
+   ICP is a *relative* measurement, but H maps it onto the absolute position
+   error state, so every update shrank P_pos toward sigma_t^2 (tr P_pos:
+   300 -> 0.0004 within frames; Kalman gain norm decayed 1.94 -> 0.11).
+   The filter grew confident in a position ICP never observes, starving all
+   later corrections while velocity/bias errors accumulated unchecked.
+   Fix: floor the P position diagonal (`pos_cov_floor`, default 1.0 m^2)
+   before each update. Seq 04 final error: 183 m -> 12 m; seq 01: 1603 m
+   -> 464 m. The principled long-term fix is stochastic cloning / a
+   sliding-window filter over relative poses.
+
+2. Wrong SE(3) inverse of the ICP measurement (minor, matters when turning).
+   inv([R|t]) = [R.T | -R.T t]; the code used t_meas = -t, dropping the
+   rotation. Negligible on straight seq 04, ~200 m on high-speed seq 01.
+
+Tested but rejected: scaling the preintegration covariance Q to the LiDAR
+interval (no-op — get_imu_between already stretches the last IMU sample's
+dt to the next LiDAR timestamp) and loosening the accel-bias prior P_ba
+(made drift worse: the bias estimate wanders when the gain is starved).
+"""
+
 import numpy as np
 from imu_integrator import (
     IMUPreintegrator,
@@ -61,7 +88,8 @@ class LidarImuEKF:
         R, v, p = ekf.get_state()
     """
 
-    def __init__(self, sigma_r=0.01, sigma_t=0.05, v_init=None):
+    def __init__(self, sigma_r=0.01, sigma_t=0.05, v_init=None,
+                 pos_cov_floor=1.0):
         """
         Parameters
         ----------
@@ -69,6 +97,13 @@ class LidarImuEKF:
         sigma_t : float         ICP translation noise std (m)
         v_init  : ndarray (3,)  initial velocity in world/LiDAR frame (m/s).
                                 Provide from OXTS for accurate IMU prediction.
+        pos_cov_floor : float   minimum diagonal value (m^2) for the position
+                                block of P. ICP is a relative measurement and
+                                never observes absolute position, but the H
+                                formulation treats it as absolute, which
+                                collapses P_pos toward sigma_t^2 and starves
+                                the Kalman gain. The floor keeps the gain
+                                healthy. Set to None to disable.
         """
         # nominal state
         self.R  = np.eye(3)
@@ -88,6 +123,8 @@ class LidarImuEKF:
             1e-6,  1e-6,  1e-6,     # delta_bg   ((rad/s)^2)
             1e-4,  1e-4,  1e-4,     # delta_ba   ((m/s^2)^2)
         ])
+
+        self.pos_cov_floor = pos_cov_floor
 
         # measurement noise (6x6) -- rotation (3) + translation (3)
         self.R_meas = np.zeros((6, 6))
@@ -202,10 +239,10 @@ class LidarImuEKF:
         T_fused : ndarray (4, 4)
             Fused pose in world frame after update.
         """
-        # ICP gives source->target: R_icp = delta_R_body.T, t_icp = -delta_p_body
-        # Convert to body-frame displacement convention to match IMU preintegration
+        # ICP gives source->target: invert to get body-frame displacement.
+        # inv([R|t]) = [R.T | -R.T t], so the translation must be rotated too.
         R_meas = T_icp[:3, :3].T
-        t_meas = -T_icp[:3,  3]
+        t_meas = -R_meas @ T_icp[:3, 3]
 
         # predicted relative transform -- use full nominal state prediction (v*dt + IMU)
         if self._last_preint is not None:
@@ -237,6 +274,13 @@ class LidarImuEKF:
         H[0:3, 0:3] = np.eye(3)        # rotation innovation from rotation error
         # ICP translation is in LiDAR/body frame; position error state is world frame
         H[3:6, 6:9] = self._R_k.T      # rotate world-frame position error to body frame
+
+        # absolute position is unobservable from relative ICP measurements;
+        # floor its covariance so the gain does not decay toward zero
+        if self.pos_cov_floor is not None:
+            for i in range(6, 9):
+                if self.P[i, i] < self.pos_cov_floor:
+                    self.P[i, i] = self.pos_cov_floor
 
         # innovation covariance
         S = H @ self.P @ H.T + self.R_meas

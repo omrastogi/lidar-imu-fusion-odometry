@@ -2,7 +2,24 @@
 
 Point-to-plane ICP scan matching fused with IMU preintegration via a 15-state Error-State Kalman Filter, evaluated on the KITTI raw dataset.
 
-![LiDAR-IMU Fusion Odometry](odometry.png)
+![LiDAR-IMU Fusion Odometry](trajectory_comparision_dark.png)
+
+## ⚠️ EKF Bug Fix (Sep 2026)
+
+Testing on KITTI seq 00/01/04 revealed the fused EKF drifting far *worse* than ICP-only. Two defects were isolated in `ekf.py` (each hypothesis tested independently, EKF-only reruns scored against OXTS ground truth):
+
+**Bug 1 — absolute-position covariance collapse (dominant).** ICP produces a *relative* pose, but the measurement Jacobian `H` maps it onto the absolute position error state. Every update therefore compressed `P_pos` toward `sigma_t²` (trace: 300 → 0.0004 within a few frames) and the Kalman gain decayed monotonically (‖K‖: 1.94 → 0.11), so ICP could no longer correct the accumulating IMU velocity/bias error.
+**Fix:** floor the position covariance diagonal before each update (`pos_cov_floor`, default 1.0 m²). A stochastic-cloning / sliding-window formulation is the principled long-term fix.
+
+**Bug 2 — wrong SE(3) inverse of the ICP measurement (minor).** `inv([R|t]) = [Rᵀ | −Rᵀt]`, but the update used `t_meas = −t`, dropping the rotation. Negligible on straight roads, ~200 m of error on the high-speed seq 01.
+
+| Final error vs GT | Seq 01 (highway, 2.6 km) | Seq 04 (straight, 407 m) |
+|---|---|---|
+| ICP only | 406 m | 8.3 m |
+| EKF before fix | 1603 m | 183 m |
+| **EKF after fix** | **464 m** | **12 m** |
+
+Also tested and rejected: rescaling the preintegration covariance `Q` to the LiDAR interval (a no-op — the loader already stretches the last IMU sample's `dt` to the next LiDAR timestamp) and loosening the accel-bias prior `P_ba` (made drift worse while the gain was starved).
 
 ## Setup
 
